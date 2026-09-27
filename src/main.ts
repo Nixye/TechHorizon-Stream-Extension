@@ -127,9 +127,11 @@ function showWatch() {
   el<HTMLElement>('#workspace').innerHTML = `
     <div class="workspace-head"><div><span class="section-kicker">${owner ? 'SUA SALA' : 'ASSISTINDO AGORA'}</span><h2>${owner ? 'Sala pronta para transmitir' : 'A sala ao vivo'}<span class="accent">.</span></h2></div><span class="live-pill" id="live-badge"><i></i> CONECTANDO</span></div>
     ${owner ? '<div class="owner-panel"><div><strong>Você está na sua sala</strong><p>Abra a captura em uma aba do navegador. A transmissão aparecerá aqui e para quem entrar com o código.</p></div><button class="button button-primary" id="open-host">Abrir captura com áudio ↗</button></div>' : ''}
-    <div class="player"><img id="screen" alt="Tela compartilhada" /><div id="player-empty" class="player-empty"><span class="empty-icon">◉</span><h3>Aguardando a transmissão</h3><p>Quando alguém começar a compartilhar, a imagem aparece aqui.</p></div><span class="player-live" id="player-live">● AO VIVO</span></div>
-    <div class="player-bottom"><div><span class="section-kicker">CÓDIGO DA SALA</span><strong id="watch-code"></strong></div><div><span class="section-kicker">ESPECTADORES</span><strong id="viewer-count">—</strong></div><button class="button button-outline" id="audio-toggle">Ativar som</button><button class="button button-outline" id="copy-room">Copiar código</button></div><div id="notice" class="notice" role="status">${owner ? 'Compartilhe apenas o código; o link de captura dá permissão para transmitir.' : 'Clique em Ativar som para ouvir o áudio da transmissão.'}</div>`;
+    <div class="player"><img id="screen" alt="Tela compartilhada" /><div id="player-empty" class="player-empty"><span class="empty-icon">◉</span><h3>Aguardando a transmissão</h3><p>Quando alguém começar a compartilhar, a imagem aparece aqui.</p></div><span class="player-live" id="player-live">● AO VIVO</span><button class="focus-exit" id="focus-exit" type="button" aria-label="Sair do modo foco" hidden>Sair do foco ✕</button></div>
+    <div class="player-bottom"><div><span class="section-kicker">CÓDIGO DA SALA</span><strong id="watch-code"></strong></div><div><span class="section-kicker">ESPECTADORES</span><strong id="viewer-count">—</strong></div><button class="button button-outline" id="audio-toggle">Ativar som</button><button class="button button-outline" id="copy-room">Copiar código</button><button class="button button-primary" id="focus-toggle" type="button">Modo foco ⛶</button></div><div id="notice" class="notice" role="status">${owner ? 'Compartilhe apenas o código; o link de captura dá permissão para transmitir.' : 'Clique em Ativar som para ouvir o áudio da transmissão.'}</div>`;
   setText('#watch-code', roomId);
+  el<HTMLButtonElement>('#focus-toggle').onclick = () => setFocusMode(true);
+  el<HTMLButtonElement>('#focus-exit').onclick = () => setFocusMode(false);
   if (owner) {
     publishToken ||= (() => { try { return sessionStorage.getItem(`stage-owner-${roomId}`) || ''; } catch { return ''; } })();
     el<HTMLButtonElement>('#open-host').onclick = async () => {
@@ -164,6 +166,12 @@ function showWatch() {
     try { await navigator.clipboard.writeText(roomId); setText('#notice', 'Código copiado.'); } catch { setText('#notice', 'Copie o código exibido acima.'); }
   };
   connectViewer();
+}
+function setFocusMode(enabled: boolean) {
+  document.body.classList.toggle('focus-mode', enabled);
+  el<HTMLButtonElement>('#focus-exit').hidden = !enabled;
+  if (enabled) el<HTMLButtonElement>('#focus-exit').focus();
+  else el<HTMLButtonElement>('#focus-toggle').focus();
 }
 function connectViewer() {
   if (!roomId) return;
@@ -336,6 +344,12 @@ renderShell();
 if (isHost) showHost();
 else if (location.pathname === '/watch' && roomId) showWatch();
 else showHome();
+window.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.body.classList.contains('focus-mode')) {
+    event.preventDefault();
+    setFocusMode(false);
+  }
+});
 window.addEventListener('beforeunload', () => {
   unloading = true;
   window.clearInterval(roomKeepaliveTimer);

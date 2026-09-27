@@ -31,3 +31,13 @@ body:has(.owner-panel) .player{height:min(52vw,calc(100vh - 310px))}
 .host-controls .button-primary{margin-left:auto}
 @media(max-width:1000px){.main{grid-template-columns:minmax(200px,29%) 1fr}.action-grid{grid-template-columns:1fr 1fr}.action-card{min-height:270px}.workspace{padding:26px 3%}.sidebar{padding:30px 8%}}
 @media(max-width:700px){.main{display:block}.sidebar{padding:20px 5%;border-right:0;border-bottom:1px solid #252a36}.sidebar h1{font-size:32px;margin:9px 0}.intro{display:none}.workspace{padding:20px 5%}.workspace-head{flex-direction:row;align-items:center}.action-grid{grid-template-columns:1fr}.action-card{min-height:220px}.card-visual{display:none}.owner-panel{align-items:stretch;flex-direction:column}.player,.host-preview{height:56vw;min-height:180px;max-height:none}body:has(.owner-panel) .player{height:56vw;max-height:none}.player-bottom{gap:12px}.player-bottom .button{flex:1}.footer{display:none}}
+
+.focus-exit{position:absolute;z-index:3;top:16px;right:16px;padding:9px 13px;border:1px solid #89939f;border-radius:8px;background:#101722e8;color:#fff;font-size:12px;font-weight:700}
+.focus-exit[hidden]{display:none}
+body.focus-mode{overflow:hidden}
+body.focus-mode .shell{max-width:none;height:100dvh;min-height:0}
+body.focus-mode .topbar,body.focus-mode .sidebar,body.focus-mode .footer,body.focus-mode .workspace-head,body.focus-mode .owner-panel,body.focus-mode .player-bottom,body.focus-mode .notice,body.focus-mode .player-live{display:none}
+body.focus-mode .main{display:block;flex:1;min-height:0}
+body.focus-mode .workspace{height:100%;padding:0}
+body.focus-mode .player,body.focus-mode:has(.owner-panel) .player{width:100%;height:100dvh;min-height:0;max-height:none;margin:0;border:0;border-radius:0}
+body.focus-mode .player img{object-fit:contain}
