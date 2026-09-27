@@ -62,6 +62,12 @@ test('publishing relays frames to viewers and rejects an invalid publisher', { t
     const received = nextBinary(viewer);
     publisher.send(frame);
     assert.deepEqual(await received, frame);
+    const audio = Buffer.alloc(1284);
+    audio.write('SA01');
+    audio.writeInt16LE(1000, 4);
+    const receivedAudio = nextBinary(viewer);
+    publisher.send(audio);
+    assert.deepEqual(await receivedAudio, audio);
     assert.equal((await fetch(`${origin}/api/rooms/${id}`)).status, 200);
     assert.equal((await fetch(`${origin}/api/rooms/${id}`, { method: 'DELETE', headers: { 'X-Publish-Token': 'wrong' } })).status, 403);
     assert.equal((await fetch(`${origin}/api/rooms/${id}`, { method: 'DELETE', headers: { 'X-Publish-Token': publishToken } })).status, 204);

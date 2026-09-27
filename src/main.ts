@@ -23,6 +23,13 @@ let reconnectTimer = 0;
 let unloading = false;
 let rendering = false;
 let lastFrameUrl = '';
+let captureAudioContext: AudioContext | null = null;
+let playbackContext: AudioContext | null = null;
+let playbackAt = 0;
+let audioEnabled = false;
+let owner = false;
+
+try { owner = Boolean(roomId && sessionStorage.getItem(`stage-owner-${roomId}`)); } catch { /* Storage can be blocked in embeds. */ }
 
 function el<T extends HTMLElement>(selector: string): T { return app.querySelector<T>(selector)!; }
 function setText(selector: string, value: string) { el<HTMLElement>(selector).textContent = value; }
@@ -95,7 +102,10 @@ async function create() {
       const configResponse = await fetch('/api/config');
       if (configResponse.ok) publicBaseUrl = (await configResponse.json()).publicUrl || '';
     }
-    showRoomCreated();
+    owner = true;
+    try { sessionStorage.setItem(`stage-owner-${roomId}`, publishToken); } catch { /* The current page remains the owner. */ }
+    history.replaceState({}, '', `/watch?room=${encodeURIComponent(roomId)}`);
+    showWatch();
   } catch (error) {
     setText('#notice', error instanceof Error ? error.message : 'Falha ao criar sala.');
     button.disabled = false;
@@ -107,41 +117,49 @@ async function openHost(url: string) {
   }
   window.open(url, '_blank', 'noopener,noreferrer');
 }
-function showRoomCreated() {
-  const hostUrl = new URL('/host', publicBaseUrl || location.href);
-  hostUrl.searchParams.set('room', roomId);
-  hostUrl.searchParams.set('token', publishToken);
-  el<HTMLElement>('#workspace').innerHTML = `
-    <div class="workspace-head"><div><span class="section-kicker">SALA CRIADA</span><h2>Pronto para entrar<span class="accent">.</span></h2></div><span class="live-pill"><i></i> AGUARDANDO TRANSMISSÃO</span></div>
-    <div class="room-card"><span class="section-kicker">CÓDIGO PARA QUEM VAI ASSISTIR</span><div class="room-code" id="room-code"></div><p>Envie este código aos seus amigos. Eles podem entrar por este site ou pela Activity.</p><div class="room-actions"><button class="button button-outline" id="copy-code">Copiar código</button><button class="button button-primary" id="open-host">Abrir transmissão ↗</button></div></div>
-    <div class="info-strip"><span class="info-icon">✳</span><p>O link de transmissão é privado: ele dá permissão para publicar na sala. Compartilhe apenas o <strong>código</strong> com espectadores.</p></div><div id="notice" class="notice" role="status"></div>`;
-  setText('#room-code', roomId);
-  window.clearInterval(roomKeepaliveTimer);
-  roomKeepaliveTimer = window.setInterval(async () => {
-    try {
-      const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`);
-      if (response.status === 404) {
-        window.clearInterval(roomKeepaliveTimer);
-        setText('#notice', 'A sala não está mais disponível. Crie outra sala.');
-        el<HTMLButtonElement>('#open-host').disabled = true;
-      }
-    } catch { /* A próxima tentativa pode recuperar uma falha temporária. */ }
-  }, 60_000);
-  el<HTMLButtonElement>('#copy-code').onclick = async () => {
-    try { await navigator.clipboard.writeText(roomId); setText('#notice', 'Código copiado.'); }
-    catch { setText('#notice', 'Selecione e copie o código acima.'); }
-  };
-  el<HTMLButtonElement>('#open-host').onclick = () => {
-    if (inDiscord && !publicBaseUrl) { setText('#notice', 'A URL pública de captura não está configurada no servidor.'); return; }
-    void openHost(hostUrl.href);
-  };
+function hostUrl() {
+  const url = new URL('/host', publicBaseUrl || location.href);
+  url.searchParams.set('room', roomId);
+  url.searchParams.set('token', publishToken);
+  return url.href;
 }
 function showWatch() {
   el<HTMLElement>('#workspace').innerHTML = `
-    <div class="workspace-head"><div><span class="section-kicker">ASSISTINDO AGORA</span><h2>A sala ao vivo<span class="accent">.</span></h2></div><span class="live-pill" id="live-badge"><i></i> CONECTANDO</span></div>
+    <div class="workspace-head"><div><span class="section-kicker">${owner ? 'SUA SALA' : 'ASSISTINDO AGORA'}</span><h2>${owner ? 'Sala pronta para transmitir' : 'A sala ao vivo'}<span class="accent">.</span></h2></div><span class="live-pill" id="live-badge"><i></i> CONECTANDO</span></div>
+    ${owner ? '<div class="owner-panel"><div><strong>Você está na sua sala</strong><p>Abra a captura em uma aba do navegador. A transmissão aparecerá aqui e para quem entrar com o código.</p></div><button class="button button-primary" id="open-host">Abrir captura com áudio ↗</button></div>' : ''}
     <div class="player"><img id="screen" alt="Tela compartilhada" /><div id="player-empty" class="player-empty"><span class="empty-icon">◉</span><h3>Aguardando a transmissão</h3><p>Quando alguém começar a compartilhar, a imagem aparece aqui.</p></div><span class="player-live" id="player-live">● AO VIVO</span></div>
-    <div class="player-bottom"><div><span class="section-kicker">CÓDIGO DA SALA</span><strong id="watch-code"></strong></div><div><span class="section-kicker">ESPECTADORES</span><strong id="viewer-count">—</strong></div><button class="text-link" id="copy-room">Copiar código ↗</button></div><div id="notice" class="notice" role="status"></div>`;
+    <div class="player-bottom"><div><span class="section-kicker">CÓDIGO DA SALA</span><strong id="watch-code"></strong></div><div><span class="section-kicker">ESPECTADORES</span><strong id="viewer-count">—</strong></div><button class="button button-outline" id="audio-toggle">Ativar som</button><button class="button button-outline" id="copy-room">Copiar código</button></div><div id="notice" class="notice" role="status">${owner ? 'Compartilhe apenas o código; o link de captura dá permissão para transmitir.' : 'Clique em Ativar som para ouvir o áudio da transmissão.'}</div>`;
   setText('#watch-code', roomId);
+  if (owner) {
+    publishToken ||= (() => { try { return sessionStorage.getItem(`stage-owner-${roomId}`) || ''; } catch { return ''; } })();
+    el<HTMLButtonElement>('#open-host').onclick = async () => {
+      if (!publishToken) { setText('#notice', 'Abra uma nova sala para recuperar o link de transmissão.'); return; }
+      if (!publicBaseUrl) {
+        try {
+          const response = await fetch('/api/config');
+          if (response.ok) publicBaseUrl = (await response.json()).publicUrl || '';
+        } catch { /* Show the configuration error below if needed. */ }
+      }
+      if (inDiscord && !publicBaseUrl) { setText('#notice', 'A URL pública de captura não está configurada.'); return; }
+      await openHost(hostUrl());
+    };
+  }
+  el<HTMLButtonElement>('#audio-toggle').onclick = async () => {
+    if (audioEnabled) {
+      audioEnabled = false;
+      await playbackContext?.suspend();
+      setText('#audio-toggle', 'Ativar som');
+      return;
+    }
+    try {
+      playbackContext ||= new AudioContext();
+      await playbackContext.resume();
+      audioEnabled = true;
+      playbackAt = 0;
+      setText('#audio-toggle', 'Desativar som');
+      setText('#notice', 'Som ativado. O áudio depende da fonte escolhida por quem transmite.');
+    } catch { setText('#notice', 'O navegador bloqueou o áudio. Tente clicar novamente em Ativar som.'); }
+  };
   el<HTMLButtonElement>('#copy-room').onclick = async () => {
     try { await navigator.clipboard.writeText(roomId); setText('#notice', 'Código copiado.'); } catch { setText('#notice', 'Copie o código exibido acima.'); }
   };
@@ -159,15 +177,12 @@ function connectViewer() {
       if (message.type === 'state') {
         setText('#live-badge', message.live ? '● AO VIVO' : '○ AGUARDANDO');
         setText('#viewer-count', String(message.viewers));
+        if (message.live && !message.audio) setText('#notice', 'Vídeo ao vivo. A fonte de captura ainda não forneceu áudio.');
+        else if (message.live && !audioEnabled) setText('#notice', 'Áudio disponível. Clique em Ativar som para ouvir.');
+        else if (message.live) setText('#notice', 'Vídeo e áudio ao vivo.');
         if (!message.live) clearFrame();
       }
-    } else {
-      if (lastFrameUrl) URL.revokeObjectURL(lastFrameUrl);
-      lastFrameUrl = URL.createObjectURL(event.data);
-      el<HTMLImageElement>('#screen').src = lastFrameUrl;
-      el<HTMLElement>('#player-empty').hidden = true;
-      el<HTMLElement>('#player-live').hidden = false;
-    }
+    } else if (event.data instanceof Blob) void handleMediaPacket(event.data);
   };
   viewerSocket.onclose = () => {
     stopWebSocketKeepalive();
@@ -183,6 +198,32 @@ function connectViewer() {
     }, 3_000);
   };
 }
+async function handleMediaPacket(blob: Blob) {
+  if (blob.size === 1284) {
+    const packet = await blob.arrayBuffer();
+    if (new DataView(packet).getUint32(0) === 0x53413031) { playAudioPacket(packet); return; }
+  }
+  if (lastFrameUrl) URL.revokeObjectURL(lastFrameUrl);
+  lastFrameUrl = URL.createObjectURL(blob);
+  el<HTMLImageElement>('#screen').src = lastFrameUrl;
+  el<HTMLElement>('#player-empty').hidden = true;
+  el<HTMLElement>('#player-live').hidden = false;
+}
+function playAudioPacket(packet: ArrayBuffer) {
+  if (!audioEnabled || !playbackContext || packet.byteLength !== 1284) return;
+  const view = new DataView(packet);
+  if (view.getUint32(0) !== 0x53413031) return;
+  const buffer = playbackContext.createBuffer(1, 640, 16000);
+  const samples = buffer.getChannelData(0);
+  for (let i = 0; i < 640; i++) samples[i] = view.getInt16(4 + i * 2, true) / 32768;
+  const source = playbackContext.createBufferSource();
+  source.buffer = buffer;
+  source.connect(playbackContext.destination);
+  const now = playbackContext.currentTime;
+  if (playbackAt < now || playbackAt > now + 0.35) playbackAt = now + 0.08;
+  source.start(playbackAt);
+  playbackAt += buffer.duration;
+}
 function clearFrame() {
   el<HTMLElement>('#player-empty').hidden = false;
   el<HTMLElement>('#player-live').hidden = true;
@@ -195,7 +236,7 @@ function showHost() {
     <div class="workspace-head"><div><span class="section-kicker">ESTÚDIO DE TRANSMISSÃO</span><h2>Você no comando<span class="accent">.</span></h2></div><span class="live-pill" id="host-badge"><i></i> FORA DO AR</span></div>
     <div class="host-preview"><video id="preview" autoplay muted playsinline></video><div id="preview-empty"><span>▣</span><h3>Sua prévia aparece aqui</h3><p>Você escolhe exatamente o que será compartilhado.</p></div></div>
     <div class="host-controls"><div><span class="section-kicker">SALA</span><strong id="host-code"></strong></div><div><span class="section-kicker">ASSISTINDO</span><strong id="host-viewers">0</strong></div><button class="button button-primary" id="start">Compartilhar tela ↗</button><button class="button button-outline" id="stop" disabled>Parar transmissão</button></div>
-    <div id="notice" class="notice" role="status"></div><div class="info-strip"><span class="info-icon">✳</span><p>Escolha uma aba, janela ou tela no seletor do navegador. A transmissão termina ao clicar em parar, fechar a aba ou usar o botão de compartilhamento do navegador.</p></div>`;
+    <div id="notice" class="notice" role="status"></div><div class="info-strip"><span class="info-icon">✳</span><p>Escolha uma aba, janela ou tela e marque a opção de compartilhar áudio quando o navegador oferecer. Som de jogo e de aplicativos depende do suporte do navegador à fonte escolhida.</p></div>`;
   setText('#host-code', roomId);
   el<HTMLButtonElement>('#start').onclick = startCapture;
   el<HTMLButtonElement>('#stop').onclick = stopCapture;
@@ -204,29 +245,56 @@ async function startCapture() {
   if (!roomId || !publishToken) { setText('#notice', 'Link de transmissão inválido.'); return; }
   if (!navigator.mediaDevices?.getDisplayMedia) { setText('#notice', 'Este navegador não permite captura de tela aqui. Abra o link em Chrome ou Edge via HTTPS.'); return; }
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10 }, audio: false });
+    const captureOptions = { video: { frameRate: 10 }, audio: true, systemAudio: 'include' as const };
+    stream = await navigator.mediaDevices.getDisplayMedia(captureOptions);
     const video = el<HTMLVideoElement>('#preview');
     video.srcObject = stream;
     await video.play();
     stream.getVideoTracks()[0].addEventListener('ended', stopCapture, { once: true });
-    socket = new WebSocket(wsUrl('publish'));
-    socket.onopen = () => {
-      startWebSocketKeepalive(socket!);
+    const publisherSocket = new WebSocket(wsUrl('publish'));
+    socket = publisherSocket;
+    publisherSocket.onopen = () => {
+      startWebSocketKeepalive(publisherSocket);
       setText('#host-badge', '● AO VIVO');
       el<HTMLElement>('#preview-empty').hidden = true;
       el<HTMLButtonElement>('#start').disabled = true;
       el<HTMLButtonElement>('#stop').disabled = false;
-      setText('#notice', 'Transmitindo. Compartilhe apenas o código da sala com os espectadores.');
+      setText('#notice', stream?.getAudioTracks().length ? 'Transmitindo vídeo e áudio da fonte selecionada.' : 'Transmitindo vídeo. A fonte selecionada não forneceu áudio; tente uma aba com Compartilhar áudio ativado.');
       timer = window.setInterval(sendFrame, 100);
+      if (stream?.getAudioTracks().length) void startAudioCapture(stream, publisherSocket);
     };
-    socket.onmessage = event => {
+    publisherSocket.onmessage = event => {
       const message = JSON.parse(event.data);
       if (message.type === 'state') setText('#host-viewers', String(message.viewers));
     };
-    socket.onclose = () => { stopWebSocketKeepalive(); if (stream) { stopCapture(); setText('#notice', 'Conexão encerrada. Tente iniciar novamente.'); } };
+    publisherSocket.onclose = () => { stopWebSocketKeepalive(); if (socket === publisherSocket && stream) { stopCapture(); setText('#notice', 'Conexão encerrada. Tente iniciar novamente.'); } };
   } catch (error) {
     stopCapture();
     setText('#notice', error instanceof Error && error.name === 'NotAllowedError' ? 'Captura cancelada. Escolha uma fonte para começar.' : 'Não foi possível iniciar a captura.');
+  }
+}
+async function startAudioCapture(capturedStream: MediaStream, publisherSocket: WebSocket) {
+  try {
+    const context = new AudioContext();
+    captureAudioContext = context;
+    await context.audioWorklet.addModule('/audio-capture-worklet.js');
+    if (stream !== capturedStream) { await context.close(); return; }
+    const source = context.createMediaStreamSource(capturedStream);
+    const processor = new AudioWorkletNode(context, 'screen-audio-capture');
+    processor.port.onmessage = event => {
+      if (publisherSocket.readyState !== WebSocket.OPEN || publisherSocket.bufferedAmount > 512 * 1024) return;
+      const pcm = new Uint8Array(event.data as ArrayBuffer);
+      if (pcm.byteLength !== 1280) return;
+      const packet = new Uint8Array(1284);
+      packet.set([0x53, 0x41, 0x30, 0x31]);
+      packet.set(pcm, 4);
+      publisherSocket.send(packet);
+    };
+    source.connect(processor);
+    processor.connect(context.destination);
+    await context.resume();
+  } catch {
+    setText('#notice', 'Vídeo ativo, mas o navegador não iniciou a captura de áudio. Tente Chrome ou Edge atualizado.');
   }
 }
 function sendFrame() {
@@ -245,6 +313,8 @@ function sendFrame() {
   }, 'image/jpeg', 0.68);
 }
 function stopCapture() {
+  void captureAudioContext?.close().catch(() => {});
+  captureAudioContext = null;
   stopWebSocketKeepalive();
   window.clearInterval(timer);
   timer = 0;
@@ -273,4 +343,5 @@ window.addEventListener('beforeunload', () => {
   stopWebSocketKeepalive();
   if (stream) stopCapture();
   if (lastFrameUrl) URL.revokeObjectURL(lastFrameUrl);
+  void playbackContext?.close();
 });

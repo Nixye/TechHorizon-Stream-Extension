@@ -52,7 +52,7 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 function sendState(room) {
-  const state = JSON.stringify({ type: 'state', live: Boolean(room.publisher), viewers: room.viewers.size });
+  const state = JSON.stringify({ type: 'state', live: Boolean(room.publisher), viewers: room.viewers.size, audio: room.hasAudio });
   if (room.publisher?.readyState === WebSocket.OPEN) room.publisher.send(state);
   for (const viewer of room.viewers) if (viewer.readyState === WebSocket.OPEN) viewer.send(state);
 }
@@ -63,6 +63,7 @@ wss.on('connection', (ws, room, role) => {
     if (room.publisher) room.publisher.close(1000, 'Nova transmissão iniciada');
     room.publisher = ws;
     room.lastFrame = null;
+    room.hasAudio = false;
   } else {
     if (room.viewers.size >= 20) return ws.close(1013, 'Sala cheia');
     room.viewers.add(ws);
@@ -72,16 +73,18 @@ wss.on('connection', (ws, room, role) => {
   ws.on('message', (data, binary) => {
     if (!binary && data.toString() === 'keepalive') { touchRoom(room); return; }
     if (role !== 'publish' || !binary || room.publisher !== ws) return;
-    // JPEG only. This is a bounded, low-latency frame relay, not a media archive.
-    if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8 || data[data.length - 2] !== 0xff || data[data.length - 1] !== 0xd9) return;
-    room.lastFrame = data;
+    const isAudio = data.length === 1284 && data.subarray(0, 4).toString() === 'SA01';
+    const isJpeg = data.length >= 4 && data[0] === 0xff && data[1] === 0xd8 && data[data.length - 2] === 0xff && data[data.length - 1] === 0xd9;
+    if (!isAudio && !isJpeg) return;
+    if (isAudio && !room.hasAudio) { room.hasAudio = true; sendState(room); }
+    if (isJpeg) room.lastFrame = data;
     touchRoom(room);
     for (const viewer of room.viewers) {
       if (viewer.readyState === WebSocket.OPEN && viewer.bufferedAmount < 2 * 1024 * 1024) viewer.send(data, { binary: true });
     }
   });
   ws.on('close', () => {
-    if (role === 'publish' && room.publisher === ws) { room.publisher = null; room.lastFrame = null; }
+    if (role === 'publish' && room.publisher === ws) { room.publisher = null; room.lastFrame = null; room.hasAudio = false; }
     if (role === 'watch') room.viewers.delete(ws);
     touchRoom(room);
     sendState(room);
