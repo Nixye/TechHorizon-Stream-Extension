@@ -2,7 +2,8 @@
 
 Site e Activity para compartilhar uma tela, janela ou aplicativo. A captura acontece em uma aba normal do Chrome/Edge; espectadores assistem no site ou dentro do Discord. O servidor repassa quadros JPEG via WebSocket, sem armazenar vídeo.
 
-**Site publicado:** https://techhorizon-stage-stream.onrender.com  
+**Site publicado:** https://techhorizon-stage-stream.onrender.com
+
 **Aplicativo Discord:** `1553857876232241263` — mapeamento raiz configurado e Activity ativada em 27/09/2026.
 
 ## Rodar localmente
