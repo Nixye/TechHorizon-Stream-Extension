@@ -2,6 +2,9 @@
 
 Site e Activity para compartilhar uma tela, janela ou aplicativo. A captura acontece em uma aba normal do Chrome/Edge; espectadores assistem no site ou dentro do Discord. O servidor repassa quadros JPEG via WebSocket, sem armazenar vídeo.
 
+**Site publicado:** https://techhorizon-stage-stream.onrender.com  
+**Aplicativo Discord:** `1553857876232241263` — mapeamento raiz configurado e Activity ativada em 27/09/2026.
+
 ## Rodar localmente
 
 ```powershell
@@ -23,7 +26,7 @@ O ID do aplicativo já está configurado. A chave pública informada não é nec
 
 ### Render
 
-O arquivo [`render.yaml`](render.yaml) cria um Web Service Node no plano gratuito. Conecte este projeto a um repositório Git e importe o Blueprint no painel Render. O plano gratuito pode hibernar após 15 minutos sem tráfego; ao reiniciar, as salas em memória são perdidas. Use um plano pago e persistência compartilhada antes de oferecer serviço público contínuo.
+O serviço atual `techhorizon-stage-stream` foi criado manualmente no Render a partir do repositório público `Nixye/TechHorizon-Stream-Extension`. O arquivo [`render.yaml`](render.yaml) registra a configuração para futuras recriações. O plano gratuito pode hibernar após 15 minutos sem tráfego; ao reiniciar, as salas em memória são perdidas. O serviço atual foi criado pela opção **Public Git Repository**, que não oferece deploy automático neste fluxo; após mudanças no código, inicie um novo deploy no painel Render. Use um plano pago e persistência compartilhada antes de oferecer serviço público contínuo.
 
 ## Limites atuais
 
