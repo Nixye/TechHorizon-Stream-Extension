@@ -17,6 +17,10 @@ let publicBaseUrl = import.meta.env.VITE_PUBLIC_URL || '';
 let socket: WebSocket | null = null;
 let stream: MediaStream | null = null;
 let timer = 0;
+let roomKeepaliveTimer = 0;
+let wsKeepaliveTimer = 0;
+let reconnectTimer = 0;
+let unloading = false;
 let rendering = false;
 let lastFrameUrl = '';
 
@@ -29,6 +33,16 @@ function wsUrl(role: 'watch' | 'publish') {
   url.searchParams.set('role', role);
   if (role === 'publish') url.searchParams.set('token', publishToken);
   return url.href;
+}
+function startWebSocketKeepalive(ws: WebSocket) {
+  window.clearInterval(wsKeepaliveTimer);
+  wsKeepaliveTimer = window.setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) ws.send('keepalive');
+  }, 60_000);
+}
+function stopWebSocketKeepalive() {
+  window.clearInterval(wsKeepaliveTimer);
+  wsKeepaliveTimer = 0;
 }
 function renderShell() {
   app.innerHTML = `
@@ -102,6 +116,17 @@ function showRoomCreated() {
     <div class="room-card"><span class="section-kicker">CÓDIGO PARA QUEM VAI ASSISTIR</span><div class="room-code" id="room-code"></div><p>Envie este código aos seus amigos. Eles podem entrar por este site ou pela Activity.</p><div class="room-actions"><button class="button button-outline" id="copy-code">Copiar código</button><button class="button button-primary" id="open-host">Abrir transmissão ↗</button></div></div>
     <div class="info-strip"><span class="info-icon">✳</span><p>O link de transmissão é privado: ele dá permissão para publicar na sala. Compartilhe apenas o <strong>código</strong> com espectadores.</p></div><div id="notice" class="notice" role="status"></div>`;
   setText('#room-code', roomId);
+  window.clearInterval(roomKeepaliveTimer);
+  roomKeepaliveTimer = window.setInterval(async () => {
+    try {
+      const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`);
+      if (response.status === 404) {
+        window.clearInterval(roomKeepaliveTimer);
+        setText('#notice', 'A sala não está mais disponível. Crie outra sala.');
+        el<HTMLButtonElement>('#open-host').disabled = true;
+      }
+    } catch { /* A próxima tentativa pode recuperar uma falha temporária. */ }
+  }, 60_000);
   el<HTMLButtonElement>('#copy-code').onclick = async () => {
     try { await navigator.clipboard.writeText(roomId); setText('#notice', 'Código copiado.'); }
     catch { setText('#notice', 'Selecione e copie o código acima.'); }
@@ -124,9 +149,11 @@ function showWatch() {
 }
 function connectViewer() {
   if (!roomId) return;
-  socket = new WebSocket(wsUrl('watch'));
-  socket.binaryType = 'blob';
-  socket.onmessage = event => {
+  const viewerSocket = new WebSocket(wsUrl('watch'));
+  socket = viewerSocket;
+  viewerSocket.binaryType = 'blob';
+  viewerSocket.onopen = () => startWebSocketKeepalive(viewerSocket);
+  viewerSocket.onmessage = event => {
     if (typeof event.data === 'string') {
       const message = JSON.parse(event.data);
       if (message.type === 'state') {
@@ -142,7 +169,19 @@ function connectViewer() {
       el<HTMLElement>('#player-live').hidden = false;
     }
   };
-  socket.onclose = () => { setText('#live-badge', '○ DESCONECTADO'); clearFrame(); };
+  viewerSocket.onclose = () => {
+    stopWebSocketKeepalive();
+    if (unloading) return;
+    setText('#live-badge', '○ RECONECTANDO');
+    clearFrame();
+    reconnectTimer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`);
+        if (response.status === 404) { setText('#live-badge', '○ SALA ENCERRADA'); return; }
+      } catch { /* Tentar novamente pelo WebSocket. */ }
+      connectViewer();
+    }, 3_000);
+  };
 }
 function clearFrame() {
   el<HTMLElement>('#player-empty').hidden = false;
@@ -172,6 +211,7 @@ async function startCapture() {
     stream.getVideoTracks()[0].addEventListener('ended', stopCapture, { once: true });
     socket = new WebSocket(wsUrl('publish'));
     socket.onopen = () => {
+      startWebSocketKeepalive(socket!);
       setText('#host-badge', '● AO VIVO');
       el<HTMLElement>('#preview-empty').hidden = true;
       el<HTMLButtonElement>('#start').disabled = true;
@@ -183,7 +223,7 @@ async function startCapture() {
       const message = JSON.parse(event.data);
       if (message.type === 'state') setText('#host-viewers', String(message.viewers));
     };
-    socket.onclose = () => { if (stream) { stopCapture(); setText('#notice', 'Conexão encerrada. Tente iniciar novamente.'); } };
+    socket.onclose = () => { stopWebSocketKeepalive(); if (stream) { stopCapture(); setText('#notice', 'Conexão encerrada. Tente iniciar novamente.'); } };
   } catch (error) {
     stopCapture();
     setText('#notice', error instanceof Error && error.name === 'NotAllowedError' ? 'Captura cancelada. Escolha uma fonte para começar.' : 'Não foi possível iniciar a captura.');
@@ -205,6 +245,7 @@ function sendFrame() {
   }, 'image/jpeg', 0.68);
 }
 function stopCapture() {
+  stopWebSocketKeepalive();
   window.clearInterval(timer);
   timer = 0;
   stream?.getTracks().forEach(track => track.stop());
@@ -225,4 +266,11 @@ renderShell();
 if (isHost) showHost();
 else if (location.pathname === '/watch' && roomId) showWatch();
 else showHome();
-window.addEventListener('beforeunload', () => { if (stream) stopCapture(); if (lastFrameUrl) URL.revokeObjectURL(lastFrameUrl); });
+window.addEventListener('beforeunload', () => {
+  unloading = true;
+  window.clearInterval(roomKeepaliveTimer);
+  window.clearTimeout(reconnectTimer);
+  stopWebSocketKeepalive();
+  if (stream) stopCapture();
+  if (lastFrameUrl) URL.revokeObjectURL(lastFrameUrl);
+});

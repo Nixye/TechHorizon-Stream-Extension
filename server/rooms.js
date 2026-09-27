@@ -1,12 +1,12 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 
-const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
+export const ROOM_IDLE_TTL_MS = 6 * 60 * 60 * 1000;
 const rooms = new Map();
 
 export function createRoom() {
   const id = randomBytes(12).toString('base64url');
   const publishToken = randomBytes(32).toString('base64url');
-  const room = { id, publishToken, createdAt: Date.now(), publisher: null, viewers: new Set(), lastFrame: null };
+  const room = { id, publishToken, lastActivityAt: Date.now(), publisher: null, viewers: new Set(), lastFrame: null };
   rooms.set(id, room);
   return { id, publishToken };
 }
@@ -14,7 +14,7 @@ export function createRoom() {
 export function getRoom(id) {
   const room = rooms.get(id);
   if (!room) return null;
-  if (Date.now() - room.createdAt > ROOM_TTL_MS && !room.publisher) {
+  if (isExpired(room)) {
     rooms.delete(id);
     return null;
   }
@@ -30,8 +30,14 @@ export function validPublishToken(room, supplied) {
 
 export function deleteRoom(id) { rooms.delete(id); }
 
-export function pruneRooms() {
+export function touchRoom(room) { room.lastActivityAt = Date.now(); }
+
+function isExpired(room, now = Date.now()) {
+  return !room.publisher && room.viewers.size === 0 && now - room.lastActivityAt > ROOM_IDLE_TTL_MS;
+}
+
+export function pruneRooms(now = Date.now()) {
   for (const [id, room] of rooms) {
-    if (Date.now() - room.createdAt > ROOM_TTL_MS && !room.publisher) rooms.delete(id);
+    if (isExpired(room, now)) rooms.delete(id);
   }
 }

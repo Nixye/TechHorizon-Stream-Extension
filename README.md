@@ -27,12 +27,12 @@ O ID do aplicativo já está configurado. A chave pública informada não é nec
 
 ### Render
 
-O serviço atual `techhorizon-stage-stream` foi criado manualmente no Render a partir do repositório público `Nixye/TechHorizon-Stream-Extension`. O arquivo [`render.yaml`](render.yaml) registra a configuração para futuras recriações. O plano gratuito pode hibernar após 15 minutos sem tráfego; ao reiniciar, as salas em memória são perdidas. O serviço atual foi criado pela opção **Public Git Repository**, que não oferece deploy automático neste fluxo; após mudanças no código, inicie um novo deploy no painel Render. Use um plano pago e persistência compartilhada antes de oferecer serviço público contínuo.
+O serviço atual `techhorizon-stage-stream` foi criado manualmente no Render a partir do repositório público `Nixye/TechHorizon-Stream-Extension`. O arquivo [`render.yaml`](render.yaml) registra a configuração para futuras recriações. O plano gratuito pode hibernar após 15 minutos sem tráfego; ao reiniciar, as salas em memória são perdidas. Enquanto uma página da sala fica aberta, ela envia sinais periódicos para manter o serviço ativo. Isso não impede reinícios da plataforma ou a suspensão do navegador/dispositivo. O serviço atual foi criado pela opção **Public Git Repository**, que não oferece deploy automático neste fluxo; após mudanças no código, inicie um novo deploy no painel Render. Use um plano pago e persistência compartilhada antes de oferecer serviço público contínuo.
 
 ## Limites atuais
 
 - Vídeo apenas, até 1280×720 e 10 quadros/s. Áudio ainda não é transmitido.
-- Até 20 espectadores por sala; salas sem transmissão expiram após 12 horas.
+- Até 20 espectadores por sala. A sala permanece válida enquanto houver participantes conectados; quando todos saem, expira após 6 horas sem atividade. Uma página da sala ainda aberta consulta o servidor a cada minuto e renova esse prazo.
 - O código da sala dá acesso à visualização. Use apenas com pessoas convidadas. Para uso público, acrescente autenticação Discord e controle de acesso.
 - O fluxo dentro do Discord precisa de validação com a Activity publicada; o build local confirma apenas o site e o servidor.
 

@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createRoom, deleteRoom, getRoom, pruneRooms, validPublishToken } from './rooms.js';
+import { createRoom, deleteRoom, getRoom, pruneRooms, touchRoom, validPublishToken } from './rooms.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -23,6 +23,7 @@ app.post('/api/rooms', (_req, res) => res.status(201).json(createRoom()));
 app.get('/api/rooms/:id', (req, res) => {
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: 'Sala não encontrada ou expirada.' });
+  touchRoom(room);
   return res.json({ id: room.id, live: Boolean(room.publisher), viewers: room.viewers.size });
 });
 app.delete('/api/rooms/:id', (req, res) => {
@@ -57,6 +58,7 @@ function sendState(room) {
 }
 
 wss.on('connection', (ws, room, role) => {
+  touchRoom(room);
   if (role === 'publish') {
     if (room.publisher) room.publisher.close(1000, 'Nova transmissão iniciada');
     room.publisher = ws;
@@ -68,10 +70,12 @@ wss.on('connection', (ws, room, role) => {
   }
   sendState(room);
   ws.on('message', (data, binary) => {
+    if (!binary && data.toString() === 'keepalive') { touchRoom(room); return; }
     if (role !== 'publish' || !binary || room.publisher !== ws) return;
     // JPEG only. This is a bounded, low-latency frame relay, not a media archive.
     if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8 || data[data.length - 2] !== 0xff || data[data.length - 1] !== 0xd9) return;
     room.lastFrame = data;
+    touchRoom(room);
     for (const viewer of room.viewers) {
       if (viewer.readyState === WebSocket.OPEN && viewer.bufferedAmount < 2 * 1024 * 1024) viewer.send(data, { binary: true });
     }
@@ -79,6 +83,7 @@ wss.on('connection', (ws, room, role) => {
   ws.on('close', () => {
     if (role === 'publish' && room.publisher === ws) { room.publisher = null; room.lastFrame = null; }
     if (role === 'watch') room.viewers.delete(ws);
+    touchRoom(room);
     sendState(room);
   });
 });
