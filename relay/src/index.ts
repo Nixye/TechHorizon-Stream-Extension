@@ -82,6 +82,7 @@ export class MediaRoom extends DurableObject<Env> {
     try { data = JSON.parse(message) as Record<string, unknown>; } catch { return; }
     if (peer.role === 'publish') {
       if (data.type === 'format' && typeof data.mime === 'string' && /^video\/webm;codecs=(vp8|vp9)(,opus)?$/.test(data.mime)) {
+        if (peer.mime !== data.mime) this.latest.delete(peer.id);
         peer.mime = data.mime;
         ws.serializeAttachment(peer);
         for (const viewer of this.sockets('watch')) if (this.peer(viewer)?.subscribed === peer.id) viewer.send(JSON.stringify({ type: 'format', id: peer.id, mime: peer.mime }));
