@@ -1,6 +1,6 @@
-# Stage — Discord Stream Activity
+# TechHorizon Stream — Discord Activity
 
-Site e Activity para compartilhar uma aba ou janela de aplicativo. A captura acontece em uma aba normal do Chrome/Edge; espectadores assistem no site ou dentro do Discord. Vídeo e áudio seguem por WebRTC diretamente entre o transmissor e cada espectador. O servidor usa WebSocket somente para criar salas e coordenar conexões; não retransmite mídia nem grava a transmissão.
+Site e Activity próprios deste repositório para compartilhar uma aba ou janela de aplicativo. A captura acontece em uma aba normal do Chrome/Edge; espectadores assistem no site ou dentro do Discord. Vídeo e áudio seguem por WebRTC diretamente entre o transmissor e cada espectador. O servidor deste projeto usa WebSocket somente para criar salas e coordenar conexões; não retransmite mídia nem grava a transmissão. Nenhuma parte do GoonTogether é usada em produção.
 
 **Site publicado:** https://techhorizon-stage-stream.onrender.com
 

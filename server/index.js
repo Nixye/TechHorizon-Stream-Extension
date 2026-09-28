@@ -110,4 +110,4 @@ wss.on('connection', (ws, room, role) => {
 
 setInterval(pruneRooms, 60 * 60 * 1000).unref();
 const port = Number(process.env.PORT || 3001);
-server.listen(port, () => console.log(`Stage em http://localhost:${port}`));
+server.listen(port, () => console.log(`TechHorizon Stream em http://localhost:${port}`));

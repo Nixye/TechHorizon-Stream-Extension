@@ -29,7 +29,7 @@ const iceServers: RTCIceServer[] = [{ urls: 'stun:stun.cloudflare.com:3478' }];
 
 type Signal = { description?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
 
-try { owner = Boolean(roomId && sessionStorage.getItem(`stage-owner-${roomId}`)); } catch { /* Storage can be blocked in embeds. */ }
+try { owner = Boolean(roomId && (sessionStorage.getItem(`techhorizon-stream-owner-${roomId}`) || sessionStorage.getItem(`stage-owner-${roomId}`))); } catch { /* Storage can be blocked in embeds. */ }
 
 function el<T extends HTMLElement>(selector: string): T { return app.querySelector<T>(selector)!; }
 function setText(selector: string, value: string) { el<HTMLElement>(selector).textContent = value; }
@@ -55,7 +55,7 @@ function renderShell() {
   app.innerHTML = `
     <div class="shell">
       <header class="topbar">
-        <a class="brand" href="/" aria-label="Stage, início"><span class="brand-icon">◉</span><span>STAGE<span class="brand-dot">.</span></span></a>
+        <a class="brand" href="/" aria-label="TechHorizon Stream, início"><span class="brand-icon">◉</span><span>TH STREAM<span class="brand-dot">.</span></span></a>
         <span class="top-label">STREAM TOGETHER <span class="label-dash">/</span> DISCORD ACTIVITY</span>
         <span class="top-status"><i></i>${inDiscord ? 'DENTRO DO DISCORD' : 'WEB APP'}</span>
       </header>
@@ -70,7 +70,7 @@ function renderShell() {
         </aside>
         <section class="workspace" id="workspace"></section>
       </main>
-      <footer class="footer"><span>STAGE / 2026</span><span>CAPTURA COM SUA PERMISSÃO • SEM GRAVAÇÃO</span><span>DESENVOLVIDO PARA DISCORD</span></footer>
+      <footer class="footer"><span>TECHHORIZON STREAM / 2026</span><span>CAPTURA COM SUA PERMISSÃO • SEM GRAVAÇÃO</span><span>DESENVOLVIDO PARA DISCORD</span></footer>
     </div>`;
 }
 function showHome() {
@@ -103,7 +103,7 @@ async function create() {
       if (configResponse.ok) publicBaseUrl = (await configResponse.json()).publicUrl || '';
     }
     owner = true;
-    try { sessionStorage.setItem(`stage-owner-${roomId}`, publishToken); } catch { /* The current page remains the owner. */ }
+    try { sessionStorage.setItem(`techhorizon-stream-owner-${roomId}`, publishToken); } catch { /* The current page remains the owner. */ }
     history.replaceState({}, '', `/watch?room=${encodeURIComponent(roomId)}`);
     showWatch();
   } catch (error) {
@@ -133,7 +133,7 @@ function showWatch() {
   el<HTMLButtonElement>('#focus-toggle').onclick = () => setFocusMode(true);
   el<HTMLButtonElement>('#focus-exit').onclick = () => setFocusMode(false);
   if (owner) {
-    publishToken ||= (() => { try { return sessionStorage.getItem(`stage-owner-${roomId}`) || ''; } catch { return ''; } })();
+    publishToken ||= (() => { try { return sessionStorage.getItem(`techhorizon-stream-owner-${roomId}`) || sessionStorage.getItem(`stage-owner-${roomId}`) || ''; } catch { return ''; } })();
     el<HTMLButtonElement>('#open-host').onclick = async () => {
       if (!publishToken) { setText('#notice', 'Abra uma nova sala para recuperar o link de transmissão.'); return; }
       if (!publicBaseUrl) {

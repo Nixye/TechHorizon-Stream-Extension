@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: techhorizon-stage-stream
+    name: techhorizon-discord-stream
     runtime: node
     plan: free
     buildCommand: npm ci && npm run build
