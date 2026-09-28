@@ -1,26 +1,30 @@
 # TechHorizon Vortex — Discord Activity
 
-Activity e site próprios para compartilhar uma aba ou janela de aplicativo. O vídeo e o áudio capturados seguem diretamente por WebRTC entre transmissor e espectadores. O site usa sua própria API de sinalização e um banco D1 para coordenar as conexões; não usa Render, Stage ou GoonTogether no caminho da transmissão.
+Site e Activity para transmitir uma aba ou janela com vídeo e áudio e assistir em grupo. O transmissor escolhe a fonte no navegador; os espectadores assistem pelo site ou dentro da Activity, alternando entre até seis transmissões. O áudio acompanha apenas a transmissão selecionada.
 
-**Site publicado:** https://techhorizon-stream-activity.black-bones-4543.chatgpt.site
+**Site:** https://techhorizon-stream-activity.black-bones-4543.chatgpt.site  
+**Relay:** https://techhorizon-vortex-relay.lunawillerp.workers.dev  
+**Aplicativo Discord:** `1553857876232241263`
 
-**Aplicativo Discord:** `1553857876232241263`. O mapeamento raiz `/` aponta para o domínio acima. Nome, ícone, descrição, tags, capa e plano de fundo seguem a identidade TechHorizon Vortex em preto espacial, azul elétrico e violeta.
+O site e a API de salas são publicados pelo Codex Sites e usam D1. O relay de mídia fica em `relay/`, publicado na conta Cloudflare da TechHorizon como Worker com um Durable Object por sala. Ele encaminha segmentos WebM por WebSocket e mantém apenas o último segmento em memória para novos espectadores. O Render, o Stage e o GoonTogether não participam desta versão.
 
-## Código atual
+## Fluxo
 
-O código publicado fica no checkout local `codex-site/`, gerenciado pelo Codex Sites em um repositório Git próprio. Este repositório raiz preserva a implementação Node/WebSocket anterior apenas como histórico; a Activity publicada não a usa.
+1. Crie ou entre em uma sala pelo site ou pela Activity.
+2. Clique em **Transmitir**. A captura abre no navegador para escolher uma aba ou janela, com a opção de áudio oferecida pelo navegador. O compartilhamento de tela inteira é recusado.
+3. Quem tem o código pode assistir, transmitir, alternar entre streams, ativar o som e usar o modo foco.
 
-## Como usar
+O navegador recebe `systemAudio: exclude` e `windowAudio: window` ao solicitar a captura. Esses parâmetros não garantem áudio isolado de todo aplicativo nativo; o suporte depende do navegador e do sistema. A opção mais confiável costuma ser capturar uma aba com áudio.
 
-1. Inicie a Activity no Discord ou abra o site. Crie uma sala: você entra nela automaticamente.
-2. Clique em **Abrir captura com áudio**. Na nova aba, clique em **Compartilhar aplicativo** e escolha uma aba ou janela. Ative o áudio dessa fonte quando o navegador oferecer. A tela inteira é recusada.
-3. Compartilhe somente o código da sala. Os espectadores entram pela Activity ou pelo site, clicam em **Ativar som** para ouvir e podem usar **Modo foco**.
+## Publicação
 
-O site pede ao navegador áudio da janela ou aba com `systemAudio: exclude` e `windowAudio: window`. Esses parâmetros são preferências; navegadores e sistemas podem não fornecer áudio isolado de um aplicativo nativo. Uma aba com áudio é a opção mais confiável. Para garantir isolamento de áudio de um jogo Windows, será necessário um capturador nativo complementar.
+O checkout `codex-site/` tem Git próprio e é publicado pelo Codex Sites. O Worker em `relay/` usa `npm ci`, `npm run check` e `npm run deploy` com uma conta Cloudflare autenticada. No Discord Developer Portal, os URL Mappings são:
 
-As salas expiram depois de 6 horas sem atividade. Há limite de 20 espectadores; o upload do transmissor cresce a cada espectador. Sem servidor TURN, conexões em redes restritivas podem falhar. A verificação da Activity pelo Discord ainda é necessária para disponibilizá-la a usuários de servidores fora da equipe de desenvolvimento.
+| Prefixo | Alvo |
+| --- | --- |
+| `/relay` | `techhorizon-vortex-relay.lunawillerp.workers.dev` |
+| `/` | `techhorizon-stream-activity.black-bones-4543.chatgpt.site` |
 
-## Referências
+O mapeamento do relay permite que o iframe do Discord abra o WebSocket. A Activity ainda depende da disponibilidade de WebSocket e reprodução WebM no cliente Discord. A disponibilidade da Activity fora dos servidores de desenvolvimento também depende da publicação/revisão do aplicativo no Discord.
 
-- [Discord Activities overview](https://docs.discord.com/developers/activities/overview)
-- [Screen Capture API](https://developer.mozilla.org/en-US/docs/Web/API/Screen_Capture_API)
+Salas sem atividade expiram após seis horas. O limite atual é de 20 espectadores e seis transmissões simultâneas por sala.
