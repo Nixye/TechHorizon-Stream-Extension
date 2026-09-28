@@ -23,26 +23,24 @@ async function waitForHealth(origin) {
 function connect(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
-    ws.once('open', () => resolve(ws));
+    const messages = [];
+    ws.on('message', (data, binary) => { if (!binary) messages.push(JSON.parse(data.toString())); });
+    ws.once('open', () => resolve({ ws, messages }));
     ws.once('error', reject);
     ws.once('close', () => reject(new Error('WebSocket closed before opening')));
   });
 }
 
-function nextBinary(ws) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Frame timed out')), 3000);
-    const handler = (data, isBinary) => {
-      if (!isBinary) return;
-      clearTimeout(timeout);
-      ws.off('message', handler);
-      resolve(data);
-    };
-    ws.on('message', handler);
-  });
+async function nextMessage(peer, predicate) {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const found = peer.messages.find(predicate);
+    if (found) return found;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error('Signal timed out');
 }
 
-test('publishing relays frames to viewers and rejects an invalid publisher', { timeout: 10000 }, async () => {
+test('publishing routes WebRTC signaling and rejects an invalid publisher', { timeout: 10000 }, async () => {
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ['server/index.js'], { cwd: process.cwd(), env: { ...process.env, PORT: String(port), PUBLIC_URL: 'https://stage.example' }, stdio: 'ignore' });
@@ -58,23 +56,23 @@ test('publishing relays frames to viewers and rejects an invalid publisher', { t
     await assert.rejects(connect(`ws://127.0.0.1:${port}/ws?room=${id}&role=publish&token=wrong`));
     viewer = await connect(`ws://127.0.0.1:${port}/ws?room=${id}&role=watch`);
     publisher = await connect(`ws://127.0.0.1:${port}/ws?room=${id}&role=publish&token=${publishToken}`);
-    const frame = Buffer.from([0xff, 0xd8, 0x00, 0x01, 0xff, 0xd9]);
-    const received = nextBinary(viewer);
-    publisher.send(frame);
-    assert.deepEqual(await received, frame);
-    const audio = Buffer.alloc(1284);
-    audio.write('SA01');
-    audio.writeInt16LE(1000, 4);
-    const receivedAudio = nextBinary(viewer);
-    publisher.send(audio);
-    assert.deepEqual(await receivedAudio, audio);
+    const viewerId = (await nextMessage(viewer, message => message.type === 'viewer')).id;
+    assert.deepEqual((await nextMessage(publisher, message => message.type === 'viewers')).ids, [viewerId]);
+    publisher.ws.send(JSON.stringify({ type: 'media', audio: true }));
+    assert.equal((await nextMessage(viewer, message => message.type === 'state' && message.audio)).audio, true);
+    const offer = { description: { type: 'offer', sdp: 'v=0\r\n' } };
+    publisher.ws.send(JSON.stringify({ type: 'signal', to: viewerId, signal: offer }));
+    assert.deepEqual((await nextMessage(viewer, message => message.type === 'signal')).signal, offer);
+    const answer = { description: { type: 'answer', sdp: 'v=0\r\n' } };
+    viewer.ws.send(JSON.stringify({ type: 'signal', signal: answer }));
+    assert.deepEqual((await nextMessage(publisher, message => message.type === 'signal' && message.from === viewerId)).signal, answer);
     assert.equal((await fetch(`${origin}/api/rooms/${id}`)).status, 200);
     assert.equal((await fetch(`${origin}/api/rooms/${id}`, { method: 'DELETE', headers: { 'X-Publish-Token': 'wrong' } })).status, 403);
     assert.equal((await fetch(`${origin}/api/rooms/${id}`, { method: 'DELETE', headers: { 'X-Publish-Token': publishToken } })).status, 204);
     assert.equal((await fetch(`${origin}/api/rooms/${id}`)).status, 404);
   } finally {
-    publisher?.terminate();
-    viewer?.terminate();
+    publisher?.ws.terminate();
+    viewer?.ws.terminate();
     child.kill();
   }
 });

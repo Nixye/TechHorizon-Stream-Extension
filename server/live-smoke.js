@@ -9,9 +9,20 @@ if (!origin || !origin.startsWith('https://')) {
 function connect(url) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
-    socket.once('open', () => resolve(socket));
+    const messages = [];
+    socket.on('message', (data, binary) => { if (!binary) messages.push(JSON.parse(data.toString())); });
+    socket.once('open', () => resolve({ socket, messages }));
     socket.once('error', reject);
   });
+}
+
+async function nextMessage(peer, predicate) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const found = peer.messages.find(predicate);
+    if (found) return found;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error('Sinal WebRTC não chegou');
 }
 
 async function main() {
@@ -24,21 +35,15 @@ async function main() {
     const wsBase = origin.replace(/^https:/, 'wss:');
     viewer = await connect(`${wsBase}/ws?room=${id}&role=watch`);
     publisher = await connect(`${wsBase}/ws?room=${id}&role=publish&token=${publishToken}`);
-    const frame = Buffer.from([0xff, 0xd8, 0, 1, 0xff, 0xd9]);
-    const received = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Quadro não chegou')), 5000);
-      viewer.on('message', (data, binary) => {
-        if (!binary) return;
-        clearTimeout(timeout);
-        resolve(data);
-      });
-    });
-    publisher.send(frame);
-    if (!Buffer.from(await received).equals(frame)) throw new Error('Quadro recebido incorreto');
-    console.log('API e retransmissão WebSocket públicas: OK');
+    const viewerId = (await nextMessage(viewer, message => message.type === 'viewer')).id;
+    const signal = { description: { type: 'offer', sdp: 'v=0\r\n' } };
+    publisher.socket.send(JSON.stringify({ type: 'signal', to: viewerId, signal }));
+    const received = await nextMessage(viewer, message => message.type === 'signal');
+    if (JSON.stringify(received.signal) !== JSON.stringify(signal)) throw new Error('Sinal WebRTC incorreto');
+    console.log('API e sinalização WebRTC públicas: OK');
   } finally {
-    publisher?.terminate();
-    viewer?.terminate();
+    publisher?.socket.terminate();
+    viewer?.socket.terminate();
     await fetch(`${origin}/api/rooms/${id}`, { method: 'DELETE', headers: { 'X-Publish-Token': publishToken } });
   }
 }

@@ -41,3 +41,5 @@ body.focus-mode .main{display:block;flex:1;min-height:0}
 body.focus-mode .workspace{height:100%;padding:0}
 body.focus-mode .player,body.focus-mode:has(.owner-panel) .player{width:100%;height:100dvh;min-height:0;max-height:none;margin:0;border:0;border-radius:0}
 body.focus-mode .player img{object-fit:contain}
+.player video{width:100%;height:100%;object-fit:contain;position:absolute;background:#070b12}
+body.focus-mode .player video{object-fit:contain}

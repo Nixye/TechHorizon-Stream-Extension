@@ -6,7 +6,7 @@ const rooms = new Map();
 export function createRoom() {
   const id = randomBytes(12).toString('base64url');
   const publishToken = randomBytes(32).toString('base64url');
-  const room = { id, publishToken, lastActivityAt: Date.now(), publisher: null, viewers: new Set(), lastFrame: null, hasAudio: false };
+  const room = { id, publishToken, lastActivityAt: Date.now(), publisher: null, viewers: new Set(), hasAudio: false };
   rooms.set(id, room);
   return { id, publishToken };
 }

@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createRoom, deleteRoom, getRoom, pruneRooms, touchRoom, validPublishToken } from './rooms.js';
 
@@ -40,7 +41,7 @@ app.use(express.static(dist, { index: false }));
 app.get(/.*/, (_req, res) => res.sendFile(join(dist, 'index.html')));
 
 const server = createServer(app);
-const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname !== '/ws') return socket.destroy();
@@ -62,30 +63,46 @@ wss.on('connection', (ws, room, role) => {
   if (role === 'publish') {
     if (room.publisher) room.publisher.close(1000, 'Nova transmissão iniciada');
     room.publisher = ws;
-    room.lastFrame = null;
     room.hasAudio = false;
+    ws.send(JSON.stringify({ type: 'viewers', ids: [...room.viewers].map(viewer => viewer.viewerId) }));
   } else {
     if (room.viewers.size >= 20) return ws.close(1013, 'Sala cheia');
+    ws.viewerId = randomBytes(16).toString('base64url');
     room.viewers.add(ws);
-    if (room.lastFrame) ws.send(room.lastFrame, { binary: true });
+    ws.send(JSON.stringify({ type: 'viewer', id: ws.viewerId }));
+    if (room.publisher?.readyState === WebSocket.OPEN) room.publisher.send(JSON.stringify({ type: 'viewer-joined', id: ws.viewerId }));
   }
   sendState(room);
   ws.on('message', (data, binary) => {
     if (!binary && data.toString() === 'keepalive') { touchRoom(room); return; }
-    if (role !== 'publish' || !binary || room.publisher !== ws) return;
-    const isAudio = data.length === 1284 && data.subarray(0, 4).toString() === 'SA01';
-    const isJpeg = data.length >= 4 && data[0] === 0xff && data[1] === 0xd8 && data[data.length - 2] === 0xff && data[data.length - 1] === 0xd9;
-    if (!isAudio && !isJpeg) return;
-    if (isAudio && !room.hasAudio) { room.hasAudio = true; sendState(room); }
-    if (isJpeg) room.lastFrame = data;
+    if (binary || data.length > 64 * 1024 || (role === 'publish' && room.publisher !== ws) || (role === 'watch' && !room.viewers.has(ws))) return;
+    let message;
+    try { message = JSON.parse(data.toString()); } catch { return; }
+    if (message?.type === 'media' && role === 'publish' && typeof message.audio === 'boolean') {
+      room.hasAudio = message.audio;
+      sendState(room);
+      return;
+    }
+    if (message?.type !== 'signal' || !message.signal || typeof message.signal !== 'object') return;
+    const signal = message.signal;
+    const validDescription = signal.description && ['offer', 'answer'].includes(signal.description.type) && typeof signal.description.sdp === 'string' && signal.description.sdp.length <= 50000;
+    const validCandidate = signal.candidate && typeof signal.candidate.candidate === 'string' && signal.candidate.candidate.length <= 3000;
+    if (!validDescription && !validCandidate) return;
+    if (validDescription && (signal.description.type !== (role === 'publish' ? 'offer' : 'answer') || signal.candidate)) return;
     touchRoom(room);
-    for (const viewer of room.viewers) {
-      if (viewer.readyState === WebSocket.OPEN && viewer.bufferedAmount < 2 * 1024 * 1024) viewer.send(data, { binary: true });
+    if (role === 'publish') {
+      const viewer = [...room.viewers].find(peer => peer.viewerId === message.to);
+      if (viewer?.readyState === WebSocket.OPEN) viewer.send(JSON.stringify({ type: 'signal', signal }));
+    } else if (room.publisher?.readyState === WebSocket.OPEN) {
+      room.publisher.send(JSON.stringify({ type: 'signal', from: ws.viewerId, signal }));
     }
   });
   ws.on('close', () => {
-    if (role === 'publish' && room.publisher === ws) { room.publisher = null; room.lastFrame = null; room.hasAudio = false; }
-    if (role === 'watch') room.viewers.delete(ws);
+    if (role === 'publish' && room.publisher === ws) { room.publisher = null; room.hasAudio = false; }
+    if (role === 'watch') {
+      room.viewers.delete(ws);
+      if (room.publisher?.readyState === WebSocket.OPEN) room.publisher.send(JSON.stringify({ type: 'viewer-left', id: ws.viewerId }));
+    }
     touchRoom(room);
     sendState(room);
   });

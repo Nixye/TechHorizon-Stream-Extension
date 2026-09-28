@@ -16,18 +16,18 @@ let publishToken = params.get('token') || '';
 let publicBaseUrl = import.meta.env.VITE_PUBLIC_URL || '';
 let socket: WebSocket | null = null;
 let stream: MediaStream | null = null;
-let timer = 0;
-let roomKeepaliveTimer = 0;
+let captureStarting = false;
 let wsKeepaliveTimer = 0;
 let reconnectTimer = 0;
 let unloading = false;
-let rendering = false;
-let lastFrameUrl = '';
-let captureAudioContext: AudioContext | null = null;
-let playbackContext: AudioContext | null = null;
-let playbackAt = 0;
 let audioEnabled = false;
 let owner = false;
+let viewerPeer: RTCPeerConnection | null = null;
+let earlyViewerCandidates: RTCIceCandidateInit[] = [];
+const hostPeers = new Map<string, RTCPeerConnection>();
+const iceServers: RTCIceServer[] = [{ urls: 'stun:stun.cloudflare.com:3478' }];
+
+type Signal = { description?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
 
 try { owner = Boolean(roomId && sessionStorage.getItem(`stage-owner-${roomId}`)); } catch { /* Storage can be blocked in embeds. */ }
 
@@ -127,7 +127,7 @@ function showWatch() {
   el<HTMLElement>('#workspace').innerHTML = `
     <div class="workspace-head"><div><span class="section-kicker">${owner ? 'SUA SALA' : 'ASSISTINDO AGORA'}</span><h2>${owner ? 'Sala pronta para transmitir' : 'A sala ao vivo'}<span class="accent">.</span></h2></div><span class="live-pill" id="live-badge"><i></i> CONECTANDO</span></div>
     ${owner ? '<div class="owner-panel"><div><strong>Você está na sua sala</strong><p>Abra a captura em uma aba do navegador. A transmissão aparecerá aqui e para quem entrar com o código.</p></div><button class="button button-primary" id="open-host">Abrir captura com áudio ↗</button></div>' : ''}
-    <div class="player"><img id="screen" alt="Tela compartilhada" /><div id="player-empty" class="player-empty"><span class="empty-icon">◉</span><h3>Aguardando a transmissão</h3><p>Quando alguém começar a compartilhar, a imagem aparece aqui.</p></div><span class="player-live" id="player-live">● AO VIVO</span><button class="focus-exit" id="focus-exit" type="button" aria-label="Sair do modo foco" hidden>Sair do foco ✕</button></div>
+    <div class="player"><video id="screen" aria-label="Tela compartilhada" autoplay playsinline muted></video><div id="player-empty" class="player-empty"><span class="empty-icon">◉</span><h3>Aguardando a transmissão</h3><p>Quando alguém começar a compartilhar, a imagem aparece aqui.</p></div><span class="player-live" id="player-live" hidden>● AO VIVO</span><button class="focus-exit" id="focus-exit" type="button" aria-label="Sair do modo foco" hidden>Sair do foco ✕</button></div>
     <div class="player-bottom"><div><span class="section-kicker">CÓDIGO DA SALA</span><strong id="watch-code"></strong></div><div><span class="section-kicker">ESPECTADORES</span><strong id="viewer-count">—</strong></div><button class="button button-outline" id="audio-toggle">Ativar som</button><button class="button button-outline" id="copy-room">Copiar código</button><button class="button button-primary" id="focus-toggle" type="button">Modo foco ⛶</button></div><div id="notice" class="notice" role="status">${owner ? 'Compartilhe apenas o código; o link de captura dá permissão para transmitir.' : 'Clique em Ativar som para ouvir o áudio da transmissão.'}</div>`;
   setText('#watch-code', roomId);
   el<HTMLButtonElement>('#focus-toggle').onclick = () => setFocusMode(true);
@@ -147,20 +147,15 @@ function showWatch() {
     };
   }
   el<HTMLButtonElement>('#audio-toggle').onclick = async () => {
-    if (audioEnabled) {
-      audioEnabled = false;
-      await playbackContext?.suspend();
-      setText('#audio-toggle', 'Ativar som');
-      return;
-    }
+    const video = el<HTMLVideoElement>('#screen');
+    if (audioEnabled) { audioEnabled = false; video.muted = true; setText('#audio-toggle', 'Ativar som'); return; }
     try {
-      playbackContext ||= new AudioContext();
-      await playbackContext.resume();
+      video.muted = false;
+      await video.play();
       audioEnabled = true;
-      playbackAt = 0;
       setText('#audio-toggle', 'Desativar som');
       setText('#notice', 'Som ativado. O áudio depende da fonte escolhida por quem transmite.');
-    } catch { setText('#notice', 'O navegador bloqueou o áudio. Tente clicar novamente em Ativar som.'); }
+    } catch { video.muted = true; setText('#notice', 'O navegador bloqueou o áudio. Tente clicar novamente em Ativar som.'); }
   };
   el<HTMLButtonElement>('#copy-room').onclick = async () => {
     try { await navigator.clipboard.writeText(roomId); setText('#notice', 'Código copiado.'); } catch { setText('#notice', 'Copie o código exibido acima.'); }
@@ -177,26 +172,31 @@ function connectViewer() {
   if (!roomId) return;
   const viewerSocket = new WebSocket(wsUrl('watch'));
   socket = viewerSocket;
-  viewerSocket.binaryType = 'blob';
   viewerSocket.onopen = () => startWebSocketKeepalive(viewerSocket);
   viewerSocket.onmessage = event => {
-    if (typeof event.data === 'string') {
-      const message = JSON.parse(event.data);
-      if (message.type === 'state') {
-        setText('#live-badge', message.live ? '● AO VIVO' : '○ AGUARDANDO');
-        setText('#viewer-count', String(message.viewers));
-        if (message.live && !message.audio) setText('#notice', 'Vídeo ao vivo. A fonte de captura ainda não forneceu áudio.');
-        else if (message.live && !audioEnabled) setText('#notice', 'Áudio disponível. Clique em Ativar som para ouvir.');
-        else if (message.live) setText('#notice', 'Vídeo e áudio ao vivo.');
-        if (!message.live) clearFrame();
-      }
-    } else if (event.data instanceof Blob) void handleMediaPacket(event.data);
+    let message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (message.type === 'state') {
+      setText('#live-badge', message.live ? '● AO VIVO' : '○ AGUARDANDO');
+      setText('#viewer-count', String(message.viewers));
+      if (message.live && !message.audio) setText('#notice', 'Vídeo ao vivo. A janela ou aba escolhida não forneceu áudio.');
+      else if (message.live && !audioEnabled) setText('#notice', 'Áudio disponível. Clique em Ativar som para ouvir.');
+      else if (message.live) setText('#notice', 'Vídeo e áudio ao vivo.');
+      if (!message.live) clearViewerMedia();
+    }
+    if (message.type === 'signal') {
+      if (message.signal?.candidate && !viewerPeer) { earlyViewerCandidates.push(message.signal.candidate); return; }
+      viewerSignaling = viewerSignaling.then(() => receiveViewerSignal(message.signal, viewerSocket)).catch(() => {
+        if (socket === viewerSocket) setText('#notice', 'Não foi possível estabelecer a conexão direta. Tente entrar novamente na sala.');
+      });
+    }
   };
   viewerSocket.onclose = () => {
     stopWebSocketKeepalive();
     if (unloading) return;
     setText('#live-badge', '○ RECONECTANDO');
-    clearFrame();
+    clearViewerMedia();
+    earlyViewerCandidates = [];
     reconnectTimer = window.setTimeout(async () => {
       try {
         const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`);
@@ -206,45 +206,65 @@ function connectViewer() {
     }, 3_000);
   };
 }
-async function handleMediaPacket(blob: Blob) {
-  if (blob.size === 1284) {
-    const packet = await blob.arrayBuffer();
-    if (new DataView(packet).getUint32(0) === 0x53413031) { playAudioPacket(packet); return; }
+let viewerSignaling = Promise.resolve();
+const pendingCandidates = new WeakMap<RTCPeerConnection, RTCIceCandidateInit[]>();
+function sendSignal(ws: WebSocket, signal: Signal, to?: string) {
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'signal', ...(to ? { to } : {}), signal }));
+}
+async function addRemoteSignal(pc: RTCPeerConnection, signal: Signal) {
+  if (signal.description) {
+    await pc.setRemoteDescription(signal.description);
+    for (const candidate of pendingCandidates.get(pc) || []) await pc.addIceCandidate(candidate);
+    pendingCandidates.delete(pc);
+  } else if (signal.candidate) {
+    if (pc.remoteDescription) await pc.addIceCandidate(signal.candidate);
+    else pendingCandidates.set(pc, [...(pendingCandidates.get(pc) || []), signal.candidate]);
   }
-  if (lastFrameUrl) URL.revokeObjectURL(lastFrameUrl);
-  lastFrameUrl = URL.createObjectURL(blob);
-  el<HTMLImageElement>('#screen').src = lastFrameUrl;
-  el<HTMLElement>('#player-empty').hidden = true;
-  el<HTMLElement>('#player-live').hidden = false;
 }
-function playAudioPacket(packet: ArrayBuffer) {
-  if (!audioEnabled || !playbackContext || packet.byteLength !== 1284) return;
-  const view = new DataView(packet);
-  if (view.getUint32(0) !== 0x53413031) return;
-  const buffer = playbackContext.createBuffer(1, 640, 16000);
-  const samples = buffer.getChannelData(0);
-  for (let i = 0; i < 640; i++) samples[i] = view.getInt16(4 + i * 2, true) / 32768;
-  const source = playbackContext.createBufferSource();
-  source.buffer = buffer;
-  source.connect(playbackContext.destination);
-  const now = playbackContext.currentTime;
-  if (playbackAt < now || playbackAt > now + 0.35) playbackAt = now + 0.08;
-  source.start(playbackAt);
-  playbackAt += buffer.duration;
+async function receiveViewerSignal(signal: Signal, ws: WebSocket) {
+  if (socket !== ws) return;
+  if (signal.description?.type === 'offer') {
+    clearViewerMedia();
+    const pc = new RTCPeerConnection({ iceServers });
+    viewerPeer = pc;
+    pendingCandidates.set(pc, earlyViewerCandidates.splice(0));
+    const remoteStream = new MediaStream();
+    pc.ontrack = event => {
+      remoteStream.addTrack(event.track);
+      const video = el<HTMLVideoElement>('#screen');
+      video.srcObject = remoteStream;
+      video.muted = !audioEnabled;
+      video.onplaying = () => {
+        if (viewerPeer !== pc) return;
+        el<HTMLElement>('#player-empty').hidden = true;
+        el<HTMLElement>('#player-live').hidden = false;
+      };
+      void video.play().catch(() => setText('#notice', 'Clique em Ativar som para iniciar a reprodução.'));
+    };
+    pc.onicecandidate = event => { if (event.candidate) sendSignal(ws, { candidate: event.candidate.toJSON() }); };
+    pc.onconnectionstatechange = () => {
+      if (viewerPeer === pc && ['failed', 'disconnected'].includes(pc.connectionState)) setText('#notice', 'Conexão direta interrompida. Confira a rede ou entre novamente na sala.');
+    };
+    await addRemoteSignal(pc, signal);
+    await pc.setLocalDescription(await pc.createAnswer());
+    if (pc.localDescription) sendSignal(ws, { description: pc.localDescription });
+  } else if (viewerPeer) await addRemoteSignal(viewerPeer, signal);
 }
-function clearFrame() {
+function clearViewerMedia() {
+  viewerPeer?.close();
+  viewerPeer = null;
+  const video = app.querySelector<HTMLVideoElement>('#screen');
+  if (video) { video.onplaying = null; video.srcObject = null; }
+  if (!app.querySelector('#player-empty')) return;
   el<HTMLElement>('#player-empty').hidden = false;
   el<HTMLElement>('#player-live').hidden = true;
-  el<HTMLImageElement>('#screen').removeAttribute('src');
-  if (lastFrameUrl) URL.revokeObjectURL(lastFrameUrl);
-  lastFrameUrl = '';
 }
 function showHost() {
   el<HTMLElement>('#workspace').innerHTML = `
     <div class="workspace-head"><div><span class="section-kicker">ESTÚDIO DE TRANSMISSÃO</span><h2>Você no comando<span class="accent">.</span></h2></div><span class="live-pill" id="host-badge"><i></i> FORA DO AR</span></div>
     <div class="host-preview"><video id="preview" autoplay muted playsinline></video><div id="preview-empty"><span>▣</span><h3>Sua prévia aparece aqui</h3><p>Você escolhe exatamente o que será compartilhado.</p></div></div>
-    <div class="host-controls"><div><span class="section-kicker">SALA</span><strong id="host-code"></strong></div><div><span class="section-kicker">ASSISTINDO</span><strong id="host-viewers">0</strong></div><button class="button button-primary" id="start">Compartilhar tela ↗</button><button class="button button-outline" id="stop" disabled>Parar transmissão</button></div>
-    <div id="notice" class="notice" role="status"></div><div class="info-strip"><span class="info-icon">✳</span><p>Escolha uma aba, janela ou tela e marque a opção de compartilhar áudio quando o navegador oferecer. Som de jogo e de aplicativos depende do suporte do navegador à fonte escolhida.</p></div>`;
+    <div class="host-controls"><div><span class="section-kicker">SALA</span><strong id="host-code"></strong></div><div><span class="section-kicker">ASSISTINDO</span><strong id="host-viewers">0</strong></div><button class="button button-primary" id="start">Compartilhar aplicativo ↗</button><button class="button button-outline" id="stop" disabled>Parar transmissão</button></div>
+    <div id="notice" class="notice" role="status"></div><div class="info-strip"><span class="info-icon">✳</span><p>Escolha a aba ou janela do aplicativo e ative o áudio dessa fonte, se o navegador oferecer. A tela inteira é bloqueada para não transmitir o som de toda a máquina. Se a janela não oferecer áudio, tente compartilhar a aba do aplicativo.</p></div>`;
   setText('#host-code', roomId);
   el<HTMLButtonElement>('#start').onclick = startCapture;
   el<HTMLButtonElement>('#stop').onclick = stopCapture;
@@ -252,80 +272,83 @@ function showHost() {
 async function startCapture() {
   if (!roomId || !publishToken) { setText('#notice', 'Link de transmissão inválido.'); return; }
   if (!navigator.mediaDevices?.getDisplayMedia) { setText('#notice', 'Este navegador não permite captura de tela aqui. Abra o link em Chrome ou Edge via HTTPS.'); return; }
+  if (captureStarting || stream) return;
+  captureStarting = true;
+  el<HTMLButtonElement>('#start').disabled = true;
   try {
-    const captureOptions = { video: { frameRate: 10 }, audio: true, systemAudio: 'include' as const };
-    stream = await navigator.mediaDevices.getDisplayMedia(captureOptions);
+    const captureOptions = { video: { frameRate: 30 }, audio: true, systemAudio: 'exclude', windowAudio: 'window', surfaceSwitching: 'exclude' } as DisplayMediaStreamOptions;
+    const captured = await navigator.mediaDevices.getDisplayMedia(captureOptions);
+    const surface = captured.getVideoTracks()[0]?.getSettings().displaySurface;
+    if (surface !== 'window' && surface !== 'browser') {
+      captured.getTracks().forEach(track => track.stop());
+      setText('#notice', 'Selecione uma aba ou janela do aplicativo. Este navegador precisa identificar a fonte para evitar capturar áudio da máquina inteira.');
+      return;
+    }
+    stream = captured;
     const video = el<HTMLVideoElement>('#preview');
     video.srcObject = stream;
     await video.play();
     stream.getVideoTracks()[0].addEventListener('ended', stopCapture, { once: true });
+    for (const track of stream.getAudioTracks()) track.addEventListener('ended', () => {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'media', audio: false }));
+      setText('#notice', 'O áudio da fonte escolhida terminou. Reinicie a captura para selecionar uma aba ou janela com áudio.');
+    }, { once: true });
     const publisherSocket = new WebSocket(wsUrl('publish'));
     socket = publisherSocket;
     publisherSocket.onopen = () => {
       startWebSocketKeepalive(publisherSocket);
+      publisherSocket.send(JSON.stringify({ type: 'media', audio: Boolean(stream?.getAudioTracks().length) }));
       setText('#host-badge', '● AO VIVO');
       el<HTMLElement>('#preview-empty').hidden = true;
       el<HTMLButtonElement>('#start').disabled = true;
       el<HTMLButtonElement>('#stop').disabled = false;
-      setText('#notice', stream?.getAudioTracks().length ? 'Transmitindo vídeo e áudio da fonte selecionada.' : 'Transmitindo vídeo. A fonte selecionada não forneceu áudio; tente uma aba com Compartilhar áudio ativado.');
-      timer = window.setInterval(sendFrame, 100);
-      if (stream?.getAudioTracks().length) void startAudioCapture(stream, publisherSocket);
+      setText('#notice', stream?.getAudioTracks().length ? 'Transmitindo vídeo e áudio da aba ou janela escolhida.' : 'Vídeo ativo, mas esta fonte não forneceu áudio. Escolha uma aba ou janela com Compartilhar áudio ativado.');
     };
     publisherSocket.onmessage = event => {
-      const message = JSON.parse(event.data);
+      let message;
+      try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'state') setText('#host-viewers', String(message.viewers));
+      if (message.type === 'viewers') for (const id of message.ids) void createHostPeer(id, publisherSocket);
+      if (message.type === 'viewer-joined') void createHostPeer(message.id, publisherSocket);
+      if (message.type === 'viewer-left') closeHostPeer(message.id);
+      if (message.type === 'signal') {
+        const pc = hostPeers.get(message.from);
+        if (pc) void addRemoteSignal(pc, message.signal).catch(() => closeHostPeer(message.from));
+      }
     };
     publisherSocket.onclose = () => { stopWebSocketKeepalive(); if (socket === publisherSocket && stream) { stopCapture(); setText('#notice', 'Conexão encerrada. Tente iniciar novamente.'); } };
   } catch (error) {
     stopCapture();
     setText('#notice', error instanceof Error && error.name === 'NotAllowedError' ? 'Captura cancelada. Escolha uma fonte para começar.' : 'Não foi possível iniciar a captura.');
+  } finally {
+    captureStarting = false;
+    if (!stream) el<HTMLButtonElement>('#start').disabled = false;
   }
 }
-async function startAudioCapture(capturedStream: MediaStream, publisherSocket: WebSocket) {
+async function createHostPeer(id: string, ws: WebSocket) {
+  if (hostPeers.has(id) || socket !== ws || !stream || typeof id !== 'string') return;
+  const pc = new RTCPeerConnection({ iceServers });
+  hostPeers.set(id, pc);
+  for (const track of stream.getTracks()) pc.addTrack(track, stream);
+  pc.onicecandidate = event => { if (event.candidate) sendSignal(ws, { candidate: event.candidate.toJSON() }, id); };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed') {
+      closeHostPeer(id);
+      setText('#notice', 'Um espectador não conseguiu estabelecer conexão direta. Redes restritivas podem exigir um relay TURN.');
+    }
+  };
   try {
-    const context = new AudioContext();
-    captureAudioContext = context;
-    await context.audioWorklet.addModule('/audio-capture-worklet.js');
-    if (stream !== capturedStream) { await context.close(); return; }
-    const source = context.createMediaStreamSource(capturedStream);
-    const processor = new AudioWorkletNode(context, 'screen-audio-capture');
-    processor.port.onmessage = event => {
-      if (publisherSocket.readyState !== WebSocket.OPEN || publisherSocket.bufferedAmount > 512 * 1024) return;
-      const pcm = new Uint8Array(event.data as ArrayBuffer);
-      if (pcm.byteLength !== 1280) return;
-      const packet = new Uint8Array(1284);
-      packet.set([0x53, 0x41, 0x30, 0x31]);
-      packet.set(pcm, 4);
-      publisherSocket.send(packet);
-    };
-    source.connect(processor);
-    processor.connect(context.destination);
-    await context.resume();
-  } catch {
-    setText('#notice', 'Vídeo ativo, mas o navegador não iniciou a captura de áudio. Tente Chrome ou Edge atualizado.');
-  }
+    await pc.setLocalDescription(await pc.createOffer());
+    if (hostPeers.get(id) === pc && pc.localDescription) sendSignal(ws, { description: pc.localDescription }, id);
+  } catch { closeHostPeer(id); }
 }
-function sendFrame() {
-  if (rendering || socket?.readyState !== WebSocket.OPEN || socket.bufferedAmount > 1024 * 1024) return;
-  const video = el<HTMLVideoElement>('#preview');
-  if (!video.videoWidth || !video.videoHeight) return;
-  rendering = true;
-  const canvas = document.createElement('canvas');
-  const scale = Math.min(1, 1280 / video.videoWidth, 720 / video.videoHeight);
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
-  canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
-  canvas.toBlob(async blob => {
-    try { if (blob && socket?.readyState === WebSocket.OPEN) socket.send(await blob.arrayBuffer()); }
-    finally { rendering = false; }
-  }, 'image/jpeg', 0.68);
+function closeHostPeer(id: string) {
+  hostPeers.get(id)?.close();
+  hostPeers.delete(id);
 }
 function stopCapture() {
-  void captureAudioContext?.close().catch(() => {});
-  captureAudioContext = null;
   stopWebSocketKeepalive();
-  window.clearInterval(timer);
-  timer = 0;
+  for (const id of hostPeers.keys()) closeHostPeer(id);
   stream?.getTracks().forEach(track => track.stop());
   stream = null;
   socket?.close();
@@ -352,10 +375,8 @@ window.addEventListener('keydown', event => {
 });
 window.addEventListener('beforeunload', () => {
   unloading = true;
-  window.clearInterval(roomKeepaliveTimer);
   window.clearTimeout(reconnectTimer);
   stopWebSocketKeepalive();
   if (stream) stopCapture();
-  if (lastFrameUrl) URL.revokeObjectURL(lastFrameUrl);
-  void playbackContext?.close();
+  clearViewerMedia();
 });
