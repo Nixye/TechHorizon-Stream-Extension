@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "techhorizon-vortex-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-28",
+  "workers_dev": true,
+  "vars": {
+    "SITE_ORIGIN": "https://techhorizon-stream-activity.black-bones-4543.chatgpt.site",
+    "DISCORD_APP_ID": "1553857876232241263"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "MediaRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MediaRoom"] }]
+}
