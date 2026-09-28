@@ -1,14 +1,14 @@
-# TechHorizon Stream — Discord Activity
+# TechHorizon Vortex — Discord Activity
 
 Activity e site próprios para compartilhar uma aba ou janela de aplicativo. O vídeo e o áudio capturados seguem diretamente por WebRTC entre transmissor e espectadores. O site usa sua própria API de sinalização e um banco D1 para coordenar as conexões; não usa Render, Stage ou GoonTogether no caminho da transmissão.
 
 **Site publicado:** https://techhorizon-stream-activity.black-bones-4543.chatgpt.site
 
-**Aplicativo Discord:** `1553857876232241263`. O mapeamento raiz `/` aponta para o domínio acima.
+**Aplicativo Discord:** `1553857876232241263`. O mapeamento raiz `/` aponta para o domínio acima. Nome, ícone, descrição, tags, capa e plano de fundo seguem a identidade TechHorizon Vortex em preto espacial, azul elétrico e violeta.
 
 ## Código atual
 
-O código publicado fica no checkout `codex-site/`, gerenciado pelo Codex Sites em um repositório Git próprio. Veja `codex-site/README.md` para a arquitetura e os comandos. Este repositório raiz preserva a implementação Node/WebSocket anterior apenas como histórico; a Activity publicada não a usa.
+O código publicado fica no checkout local `codex-site/`, gerenciado pelo Codex Sites em um repositório Git próprio. Este repositório raiz preserva a implementação Node/WebSocket anterior apenas como histórico; a Activity publicada não a usa.
 
 ## Como usar
 
