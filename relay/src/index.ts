@@ -19,7 +19,8 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return Response.json({ ok: true, service: 'vortex-relay' });
-    if (url.pathname !== '/relay' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Not found', { status: 404 });
+    // Discord removes the /relay mapping prefix before forwarding to this Worker.
+    if ((url.pathname !== '/relay' && url.pathname !== '/') || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Not found', { status: 404 });
     if (!allowedOrigin(request.headers.get('Origin'), env)) return new Response('Origin not allowed', { status: 403 });
     const room = url.searchParams.get('room') || '';
     const id = url.searchParams.get('id') || '';
