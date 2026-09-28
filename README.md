@@ -36,7 +36,7 @@ O serviço atual `techhorizon-stage-stream` foi criado manualmente no Render a p
 - Cada espectador recebe uma conexão WebRTC direta do transmissor. A velocidade de upload necessária cresce com o número de espectadores; salas grandes precisam de uma arquitetura de distribuição de mídia diferente.
 - Até 20 espectadores por sala. A sala permanece válida enquanto houver participantes conectados; quando todos saem, expira após 6 horas sem atividade. Uma página da sala ainda aberta consulta o servidor a cada minuto e renova esse prazo.
 - O código da sala dá acesso à visualização. Use apenas com pessoas convidadas. Para uso público, acrescente autenticação Discord e controle de acesso.
-- Esta adaptação ainda não foi testada nem publicada. O acesso público à Activity por contas fora da equipe exige a verificação do aplicativo pelo Discord.
+- Esta adaptação foi publicada no Render, mas ainda não foi testada em uma sessão real com dois participantes, conforme solicitado. O acesso público à Activity por contas fora da equipe exige a verificação do aplicativo pelo Discord.
 
 ## Referências
 
